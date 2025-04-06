@@ -1,6 +1,9 @@
 [package]
 name = "download-shell"
 edition = "2024"
+version = "1.0.0"
+license = "GPL-2.0"
+private = true
 
 [dependencies]
 libc = "0.2"

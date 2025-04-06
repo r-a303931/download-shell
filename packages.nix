@@ -6,26 +6,19 @@ let
     inherit src;
     strictDeps = true;
 
-    nativeBuildInputs = buildTools;
+    nativeBuildInputs = buildTools ++ (with pkgs; [ musl ]);
     buildInputs = buildTools;
 
-    RUSTFLAGS = "-Ctarget-feature=+crt-static";
+    RUSTFLAGS = "-Clink-arg=-fuse-ld=mold";
   };
 
-  gnuLinuxCargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
-    name = "dl-shell-deps-gnu-linux";
-    cargoExtraArgs =
-      "--target=x86_64-unknown-linux-gnu --locked -p sparse-server";
-  });
-  linuxCargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs // {
     name = "dl-shell-deps-linux";
-    cargoExtraArgs =
-      "--target=x86_64-unknown-linux-musl --locked -p sparse-unix-beacon -p sparse-unix-installer";
-    RUSTFLAGS = "-Ctarget-feature=+crt-static";
+    cargoExtraArgs = "--target=x86_64-unknown-linux-musl --locked";
   });
 
-  download-shell = craneLib.buildPackage
-    (commonArgs // { cargoArtifacts = linuxCargoArtifacts; });
+  download-shell =
+    craneLib.buildPackage (commonArgs // { cargoArtifacts = cargoArtifacts; });
 
   outputs = rec {
     packages = { default = download-shell; };
@@ -37,7 +30,7 @@ let
       };
       rs-deny = craneLib.cargoDeny { inherit src; };
       rs-clippy = craneLib.cargoClippy (commonArgs // {
-        cargoArtifacts = linuxCargoArtifacts;
+        cargoArtifacts = cargoArtifacts;
         cargoClippyExtraArgs = "--all-targets -- --deny warnings";
       });
     };

@@ -51,18 +51,12 @@
         craneLib = (crane.mkLib pkgs).overrideToolchain (p:
           p.rust-bin.nightly.latest.default.override {
             extensions = [ "rust-src" ];
-            targets =
-              [ "x86_64-unknown-linux-gnu" "x86_64-unknown-linux-musl" ];
+            targets = [ "x86_64-unknown-linux-musl" ];
           });
 
         buildEnvironment = {
           DL_SHELL_LIBNL = libnl;
           DL_SHELL_LIBIPTC = libiptc;
-
-          LIBCLANG_PATH = "${pkgs.libclang.lib}/lib";
-
-          GLIBC_LIBS = pkgs.glibc;
-          GLIBC_LIBS_STATIC = pkgs.glibc.static;
         };
 
         outputs = import ./packages.nix ({
@@ -77,6 +71,7 @@
             name = "dl-shell-default";
 
             packages = buildTools ++ devShellTools;
+            nativeBuildTools = buildTools ++ (with pkgs; [ musl ]);
           });
         };
       });
