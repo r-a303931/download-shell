@@ -1,0 +1,149 @@
+{
+  "nodes": {
+    "advisory-db": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1743864670,
+        "narHash": "sha256-baVgx8o9dhVNHJHkHKvB20YAz5/qP/LUygawKxIQi/E=",
+        "owner": "rustsec",
+        "repo": "advisory-db",
+        "rev": "f1688a2f9a55b7e9a6226d053fd43099f1849f5f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "rustsec",
+        "repo": "advisory-db",
+        "type": "github"
+      }
+    },
+    "crane": {
+      "locked": {
+        "lastModified": 1743908961,
+        "narHash": "sha256-e1idZdpnnHWuosI3KsBgAgrhMR05T2oqskXCmNzGPq0=",
+        "owner": "ipetkov",
+        "repo": "crane",
+        "rev": "80ceeec0dc94ef967c371dcdc56adb280328f591",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ipetkov",
+        "repo": "crane",
+        "type": "github"
+      }
+    },
+    "flake-utils": {
+      "inputs": {
+        "systems": "systems"
+      },
+      "locked": {
+        "lastModified": 1731533236,
+        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "libiptc-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1542908245,
+        "narHash": "sha256-kDq0IMUjB7GlbaV+lJjnwEXraz5BQ48RpfgDJabhzc0=",
+        "ref": "refs/heads/master",
+        "rev": "9c479c7e74125e4e2349f37a355384da02e2a4ec",
+        "revCount": 2862,
+        "type": "git",
+        "url": "https://github.com/netgroup-polito/iptables"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://github.com/netgroup-polito/iptables"
+      }
+    },
+    "libnl-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1743402142,
+        "narHash": "sha256-7dcVdysPi7Mns9xnpyI4RtLyW7axY3MmbpjnXiyuTNo=",
+        "ref": "refs/heads/main",
+        "rev": "f278e5921498fc635bd9534a3f24979bb1b2849d",
+        "revCount": 2139,
+        "type": "git",
+        "url": "https://github.com/thom311/libnl"
+      },
+      "original": {
+        "type": "git",
+        "url": "https://github.com/thom311/libnl"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1743827369,
+        "narHash": "sha256-rpqepOZ8Eo1zg+KJeWoq1HAOgoMCDloqv5r2EAa9TSA=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "42a1c966be226125b48c384171c44c651c236c22",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "advisory-db": "advisory-db",
+        "crane": "crane",
+        "flake-utils": "flake-utils",
+        "libiptc-src": "libiptc-src",
+        "libnl-src": "libnl-src",
+        "nixpkgs": "nixpkgs",
+        "rust-overlay": "rust-overlay"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1743906877,
+        "narHash": "sha256-Thah1oU8Vy0gs9bh5QhNcQh1iuQiowMnZPbrkURonZA=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "9d00c6b69408dd40d067603012938d9fbe95cfcd",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "systems": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
