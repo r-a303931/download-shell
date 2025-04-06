@@ -1,0 +1,3 @@
+#+TITLE: download-shell
+
+A simple wrapper around shells or shell scripts to provide outbound network access from a different IP address. Useful for contested networks, allowing blocking outbound network traffic from a host but still allowing a specific shell to continue operating on the system and accessing the internet
