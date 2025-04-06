@@ -69,6 +69,40 @@ pub struct Link {
 }
 
 impl Link {
+    pub const IFF_UP: c_uint = 1 << 0;
+
+    /// Creates a new, empty link object that can be used to issue changes
+    pub fn new() -> Self {
+        Self {
+            link: unsafe { rtnl_link_alloc() },
+        }
+    }
+
+    /// Create a new empty link that is optimized for virtual ethernet pairing
+    pub fn new_veth() -> Self {
+        Self {
+            link: unsafe { rtnl_link_veth_alloc() },
+        }
+    }
+
+    /// Apply differences found in the other link object
+    pub fn change(&self, socket: &super::netlink::Socket, other: &Link) -> error::Result<()> {
+        let ret = unsafe {
+            rtnl_link_change(
+                socket.sock,
+                self.link,
+                other.link,
+                0x100, /* NLM_F_REPLACE */
+            )
+        };
+
+        if ret < 0 {
+            return Err(error::Error::new(ret));
+        }
+
+        Ok(())
+    }
+
     /// Returns the network link name, e.g. eth0
     pub fn name(&self) -> String {
         unsafe {
@@ -125,6 +159,68 @@ impl Link {
 
             Neigh { neigh }.lladdr().hw_address().try_into().ok()
         }
+    }
+
+    /// Set the name of an interface
+    pub fn set_name(&self, name: &str) {
+        unsafe {
+            rtnl_link_set_name(self.link, name.as_ptr() as *const _);
+        }
+    }
+
+    /// Set the namespace file descriptor for an interface
+    pub fn set_ns_fd(&self, ns_fd: c_int) {
+        unsafe {
+            rtnl_link_set_ns_fd(self.link, ns_fd);
+        }
+    }
+
+    /// Add the link to the running environment
+    pub fn add(&self, socket: &super::netlink::Socket, flags: c_int) -> error::Result<()> {
+        let ret = unsafe { rtnl_link_add(socket.sock, self.link, flags) };
+
+        if ret < 0 {
+            Err(error::Error::new(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Deletes the active link
+    pub fn delete(self, socket: &super::netlink::Socket) -> error::Result<()> {
+        let ret = unsafe { rtnl_link_delete(socket.sock, self.link) };
+
+        if ret < 0 {
+            Err(error::Error::new(ret))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Get the flags on a link
+    pub fn get_flags(&self) -> c_uint {
+        unsafe { rtnl_link_get_flags(self.link) }
+    }
+
+    /// Set flags to ON for a link
+    pub fn set_flags(&self, flags: c_uint) {
+        unsafe { rtnl_link_set_flags(self.link, flags) }
+    }
+
+    /// Toggle flags OFF for a link
+    pub fn unset_flags(&self, flags: c_uint) {
+        unsafe { rtnl_link_unset_flags(self.link, flags) }
+    }
+
+    /// If this is a veth link, return the peer
+    pub fn get_peer(&self) -> Option<Self> {
+        let link = unsafe { rtnl_link_veth_get_peer(self.link) };
+
+        if link.is_null() {
+            return None;
+        }
+
+        Some(Self { link })
     }
 }
 

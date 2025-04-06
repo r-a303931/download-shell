@@ -82,6 +82,8 @@ unsafe extern "C" {
     pub fn rtnl_neigh_get_lladdr(neigh: *mut rtnl_neigh) -> *mut nl_addr;
     pub fn rtnl_neigh_get_ifindex(neigh: *mut rtnl_neigh) -> c_int;
 
+    pub fn rtnl_link_alloc() -> *mut rtnl_link;
+    pub fn rtnl_link_veth_alloc() -> *mut rtnl_link;
     pub fn rtnl_link_get(cache: *mut nl_cache, index: c_int) -> *mut rtnl_link;
     pub fn rtnl_link_alloc_cache(
         sock: *mut nl_sock,
@@ -92,7 +94,21 @@ unsafe extern "C" {
     pub fn rtnl_link_get_name(link: *mut rtnl_link) -> *const c_char;
     pub fn rtnl_link_get_ifindex(link: *mut rtnl_link) -> c_int;
     pub fn rtnl_link_get_type(link: *mut rtnl_link) -> *const c_char;
+    pub fn rtnl_link_get_flags(link: *mut rtnl_link) -> c_uint;
+    pub fn rtnl_link_set_flags(link: *mut rtnl_link, flags: c_uint);
+    pub fn rtnl_link_unset_flags(link: *mut rtnl_link, flags: c_uint);
     pub fn rtnl_link_get_mtu(link: *mut rtnl_link) -> c_uint;
+    pub fn rtnl_link_set_ns_fd(link: *mut rtnl_link, fd: c_int);
+    pub fn rtnl_link_set_name(link: *mut rtnl_link, name: *const c_char);
+    pub fn rtnl_link_change(
+        sock: *mut nl_sock,
+        link: *mut rtnl_link,
+        changes: *mut rtnl_link,
+        flags: c_int,
+    ) -> c_int;
+    pub fn rtnl_link_add(sock: *mut nl_sock, link: *const rtnl_link, flags: c_int) -> c_int;
+    pub fn rtnl_link_delete(sock: *mut nl_sock, link: *const rtnl_link) -> c_int;
+    pub fn rtnl_link_veth_get_peer(link: *mut rtnl_link) -> *mut rtnl_link;
 
     pub fn rtnl_route_alloc_cache(
         sock: *mut nl_sock,

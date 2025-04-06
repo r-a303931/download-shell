@@ -6,6 +6,7 @@ license = "GPL-2.0"
 private = true
 
 [dependencies]
+anyhow = "1.0.97"
 libc = "0.2"
 
 [profile.release]
