@@ -380,7 +380,27 @@ fn main() -> anyhow::Result<()> {
             }
 
             // 25: ip -n downloader route add default via 172.31.254.253
-            {}
+            {
+                let hop = nl::route::Nexthop::new()
+                    .ok_or(anyhow::anyhow!("Could not allocate a new nexthop object"))?;
+
+                let gateway = nl::route::Addr::from(host_tunnel_ip);
+
+                hop.set_ifindex(container_link.ifindex());
+                hop.set_gateway(gateway);
+
+                let new_route = nl::route::Route::new().ok_or(anyhow::anyhow!(
+                    "Could not allocate a new default route object for the namespace"
+                ))?;
+
+                let default_route = nl::route::Addr::from(Ipv4Addr::new(0, 0, 0, 0));
+                default_route.set_cidrlen(0);
+
+                new_route.add_nexthop(&hop);
+                new_route.set_dst(default_route);
+
+                new_route.add(&nl_sock, 0x400)?;
+            }
 
             // 41: ip netns exec downloader bash
             {
