@@ -49,22 +49,6 @@
         "type": "github"
       }
     },
-    "libiptc-src": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1542908245,
-        "narHash": "sha256-kDq0IMUjB7GlbaV+lJjnwEXraz5BQ48RpfgDJabhzc0=",
-        "ref": "refs/heads/master",
-        "rev": "9c479c7e74125e4e2349f37a355384da02e2a4ec",
-        "revCount": 2862,
-        "type": "git",
-        "url": "https://github.com/netgroup-polito/iptables"
-      },
-      "original": {
-        "type": "git",
-        "url": "https://github.com/netgroup-polito/iptables"
-      }
-    },
     "libnl-src": {
       "flake": false,
       "locked": {
@@ -102,7 +86,6 @@
         "advisory-db": "advisory-db",
         "crane": "crane",
         "flake-utils": "flake-utils",
-        "libiptc-src": "libiptc-src",
         "libnl-src": "libnl-src",
         "nixpkgs": "nixpkgs",
         "rust-overlay": "rust-overlay"

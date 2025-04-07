@@ -19,14 +19,10 @@
       url = "git+https://github.com/thom311/libnl";
       flake = false;
     };
-    libiptc-src = {
-      url = "git+https://github.com/netgroup-polito/iptables";
-      flake = false;
-    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, crane, rust-overlay, advisory-db
-    , libnl-src, libiptc-src }:
+  outputs =
+    { self, nixpkgs, flake-utils, crane, rust-overlay, advisory-db, libnl-src }:
     flake-utils.lib.eachSystem [ "x86_64-linux" ] (system:
       let
         pkgs = import nixpkgs {
@@ -34,9 +30,8 @@
           overlays = [ (import rust-overlay) ];
         };
 
-        system-libs =
-          import ./system-libs.nix { inherit pkgs libnl-src libiptc-src; };
-        inherit (system-libs) libnl libiptc;
+        system-libs = import ./system-libs.nix { inherit pkgs libnl-src; };
+        inherit (system-libs) libnl libmnl libnftnl libiptc;
 
         buildTools = with pkgs; [ lld clang libclang libgcc mold glibc ];
         devShellTools = with pkgs; [
@@ -54,14 +49,11 @@
             targets = [ "x86_64-unknown-linux-musl" ];
           });
 
-        buildEnvironment = {
-          DL_SHELL_LIBNL = libnl;
-          DL_SHELL_LIBIPTC = libiptc;
-        };
+        buildEnvironment = { DL_SHELL_LIBNL = libnl; };
 
         outputs = import ./packages.nix ({
           inherit pkgs buildTools buildEnvironment craneLib advisory-db;
-        } // system-libs);
+        });
       in {
         packages = outputs.packages;
         checks = outputs.checks;

@@ -14,6 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program; if not, see <https://www.gnu.org/licenses/>.
 
+#![no_main]
+
 use std::net::Ipv4Addr;
 
 mod iptc;
@@ -119,7 +121,23 @@ fn find_tunnel_ip_range(routes: &nl::netlink::Cache<nl::route::Route>) -> anyhow
     Ok(result_ip)
 }
 
-fn main() -> anyhow::Result<()> {
+#[unsafe(no_mangle)]
+pub extern "C" fn main(
+    argc: i32,
+    argv: *mut *mut libc::c_char,
+    envp: *mut *mut libc::c_char,
+) -> i32 {
+    if let Err(e) = main_internal(argc, argv, envp) {
+        eprintln!("Issue running the main function: {e}");
+    }
+    0
+}
+
+fn main_internal(
+    argc: i32,
+    argv: *mut *mut libc::c_char,
+    envp: *mut *mut libc::c_char,
+) -> anyhow::Result<()> {
     // This Rust program is based on a bash script, found in the root
     // of this git repo called download-shell.sh
 
@@ -248,6 +266,10 @@ fn main() -> anyhow::Result<()> {
 
     // 29: echo 1 > /proc/sys/net/ipv4/ip_forward
     std::fs::write("/proc/sys/net/ipv4/ip_forward", b"1")?;
+
+    println!("Here 1");
+    iptc::init_iptables();
+    println!("Here 2");
 
     // 31: If a source IP is specified
     match &args.source_ip {
@@ -413,22 +435,11 @@ fn main() -> anyhow::Result<()> {
                     .chain(Some(std::ptr::null()))
                     .collect();
 
-                let env_vars: Vec<std::ffi::CString> = std::env::vars()
-                    .map(|(key, value)| {
-                        std::ffi::CString::new(format!("{}={}", key, value)).unwrap()
-                    })
-                    .collect();
-                let envp: Vec<*const std::ffi::c_char> = env_vars
-                    .iter()
-                    .map(|s| s.as_ptr())
-                    .chain(Some(std::ptr::null()))
-                    .collect();
-
                 unsafe {
                     libc::execve(
                         args.program.as_ptr() as *const i8,
                         argv.as_ptr(),
-                        envp.as_ptr(),
+                        &(*envp as *const _) as *const _,
                     );
                 }
             }
