@@ -26,7 +26,7 @@ struct Args {
 }
 
 fn parse_args() -> Args {
-    let mut program = "bash".to_owned();
+    let mut program = "/bin/sh".to_owned();
     let mut source_ip = None::<Ipv4Addr>;
 
     let mut args = std::env::args();
@@ -62,7 +62,7 @@ fn parse_args() -> Args {
 
 /// Find an available IP range that can be used to tunnel traffic
 /// between the new namespace and the host system
-fn find_tunnel_ip_range(routes: nl::netlink::Cache<nl::route::Route>) -> anyhow::Result<Ipv4Addr> {
+fn find_tunnel_ip_range(routes: &nl::netlink::Cache<nl::route::Route>) -> anyhow::Result<Ipv4Addr> {
     let mut result_ip = Ipv4Addr::new(172, 16, 0, 0);
 
     let mut routes = routes.iter().collect::<Vec<_>>();
@@ -155,7 +155,7 @@ fn main() -> anyhow::Result<()> {
     let nl_sock = nl::netlink::Socket::new()?;
     let routes = nl_sock.get_routes()?;
 
-    let tunnel_net_id: u32 = find_tunnel_ip_range(routes)?.into();
+    let tunnel_net_id: u32 = find_tunnel_ip_range(&routes)?.into();
 
     let host_link_name = format!("dlsh{}.0", unsafe { libc::getpid() });
     let container_link_name = format!("dlsh{}.1", unsafe { libc::getpid() });
@@ -203,9 +203,10 @@ fn main() -> anyhow::Result<()> {
         host_link.change(&nl_sock, &up)?;
     }
 
-    // 20: ip addr add 172.31.254.253/30 dev downloader.0
-    let tunnel_broadcast_ip: Ipv4Addr = (tunnel_net_id + 3).into();
     let host_tunnel_ip: Ipv4Addr = (tunnel_net_id + 1).into();
+    let container_tunnel_ip: Ipv4Addr = (tunnel_net_id + 2).into();
+    let tunnel_broadcast_ip: Ipv4Addr = (tunnel_net_id + 3).into();
+    // 20: ip addr add 172.31.254.253/30 dev downloader.0
     {
         let local_ip = nl::route::Addr::from(host_tunnel_ip);
         let broadcast_ip = nl::route::Addr::from(tunnel_broadcast_ip);
@@ -218,6 +219,188 @@ fn main() -> anyhow::Result<()> {
         rt_local_ip.set_prefixlen(30);
 
         rt_local_ip.add(nl_sock, 0x200)?;
+    }
+
+    // Lines 18 and 22-25 need to be done after forking and unshare
+
+    // 27: DEFAULT_IF="$(ip r | grep default | sed -nE 's/^.*dev ([^ ]*) ?.*/\1/p')""
+    let default_if = {
+        let default_route = routes
+            .iter()
+            .find(|r| r.dst().map(|a| a.cidrlen() == 0).unwrap_or(false))
+            .ok_or(anyhow::anyhow!("Could not find the default route"))?;
+
+        let local_hop = default_route
+            .hop_iter()
+            .next()
+            .ok_or(anyhow::anyhow!(
+                "Could not get the local interface for the default route gateway"
+            ))?
+            .ifindex();
+
+        links
+            .iter()
+            .find(|l| l.ifindex() == local_hop)
+            .ok_or(anyhow::anyhow!(
+                "Could not find the interface associated with the default route"
+            ))?
+    };
+
+    // 29: echo 1 > /proc/sys/net/ipv4/ip_forward
+    std::fs::write("/proc/sys/net/ipv4/ip_forward", "1")?;
+
+    // 31: If a source IP is specified
+    match &args.source_ip {
+        None => {
+            // 32: iptables -t nat -A POSTROUTING -o "$DEFAULT_IF" -j MASQUERADE
+        }
+        Some(ip) => {
+            // 34: iptables -t nat -A POSTROUTING -s 172.31.254.254 -j SNAT --to-source $1
+            {}
+
+            // 36: echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
+            std::fs::write("/proc/sys/net/ipv4/conf/all/proxy_arp", "1")?;
+            // 37: echo 1 > /proc/sys/net/ipv4/conf/$DEFAULT_IF/proxy_arp
+            std::fs::write(
+                &format!("/proc/sys/net/ipv4/conf/{}/proxy_arp", &default_if.name()),
+                "1",
+            )?;
+
+            // 38: ip route add $1/32 dev downloader.0
+            {}
+        }
+    }
+
+    // iptables -t filter -A FORWARD -s 172.31.254.254 -j ACCEPT
+    {}
+
+    let (unshare_semaphore, movelink_semaphore) = unsafe {
+        let unshare_semaphore = libc::mmap(
+            std::ptr::null_mut(),
+            std::mem::size_of::<libc::sem_t>(),
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_ANONYMOUS | libc::MAP_SHARED,
+            0,
+            0,
+        ) as *mut libc::sem_t;
+        libc::sem_init(unshare_semaphore, 1, 0);
+
+        let movelink_semaphore = libc::mmap(
+            std::ptr::null_mut(),
+            std::mem::size_of::<libc::sem_t>(),
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_ANONYMOUS | libc::MAP_SHARED,
+            0,
+            0,
+        ) as *mut libc::sem_t;
+        libc::sem_init(movelink_semaphore, 1, 1);
+
+        (unshare_semaphore, movelink_semaphore)
+    };
+
+    let child = unsafe { libc::fork() };
+
+    match child {
+        // Error
+        ..0 => {
+            // Error out
+        }
+        // Child
+        0 => {
+            // 16: ip netns add downloader
+            println!("child: Unsharing!");
+            {
+                let unshare_result =
+                    unsafe { libc::unshare(libc::CLONE_NEWNS | libc::CLONE_NEWNET) };
+
+                if unshare_result < 0 {
+                    eprintln!("Could not unshare! {:?}", std::io::Error::last_os_error());
+                    std::process::exit(2);
+                }
+
+                unsafe {
+                    libc::sem_post(unshare_semaphore);
+                }
+            }
+
+            println!("child: Waiting for link");
+            // 18: ip link set downloader.1 netns downloader
+            unsafe {
+                libc::sem_wait(movelink_semaphore);
+            }
+            println!("child: Got link! Executing");
+
+            // 41: ip netns exec downloader bash
+            {
+                // TODO: remount /sys
+
+                let argv: Vec<*const std::ffi::c_char> = args
+                    .program_args
+                    .iter()
+                    .map(|s| s.as_ptr() as *const i8)
+                    .chain(Some(std::ptr::null()))
+                    .collect();
+
+                let env_vars: Vec<std::ffi::CString> = std::env::vars()
+                    .map(|(key, value)| {
+                        std::ffi::CString::new(format!("{}={}", key, value)).unwrap()
+                    })
+                    .collect();
+                let envp: Vec<*const std::ffi::c_char> = env_vars
+                    .iter()
+                    .map(|s| s.as_ptr())
+                    .chain(Some(std::ptr::null()))
+                    .collect();
+
+                unsafe {
+                    libc::execve(
+                        args.program.as_ptr() as *const i8,
+                        argv.as_ptr(),
+                        envp.as_ptr(),
+                    );
+                }
+            }
+        }
+        // Parent
+        1.. => {
+            // 16: ip netns add downloader
+            println!("parent: Waiting for child unshare...");
+            unsafe {
+                libc::sem_wait(unshare_semaphore);
+            };
+            println!("parent: Got child unshare!");
+
+            // 18: ip link set downloader.1 netns downloader
+            {
+                unsafe {
+                    libc::sem_post(movelink_semaphore);
+                }
+            }
+
+            println!("parent: Signalled ready to exec");
+
+            // 41: ip netns exec downloader bash
+            {
+                let mut status = 0;
+                unsafe {
+                    libc::waitpid(child, &mut status, 0);
+                    libc::kill(child, libc::SIGKILL);
+                }
+            }
+
+            // 43: ip netns delete downloader
+            // Implicitly performed by the child process dying
+        }
+    }
+
+    // 45: If a source IP is specified
+    match &args.source_ip {
+        None => {
+            // 46: iptables -t nat -D POSTROUTING $(iptables --line-numbers -vn -t nat -L POSTROUTING | awk '/MASQUERADE/ { print $1 }')
+        }
+        Some(ip) => {
+            // 48: iptables -t nat -D POSTROUTING $(iptables --line-numbers -vn -t nat -L POSTROUTING | awk '/'$1'/ { print $1 }')
+        }
     }
 
     Ok(())
