@@ -92,7 +92,7 @@ impl RtAddr {
         unsafe { rtnl_addr_get_family(self.addr) }
     }
 
-    pub fn add(&self, sock: netlink::Socket, flags: c_int) -> error::Result<()> {
+    pub fn add(&self, sock: &netlink::Socket, flags: c_int) -> error::Result<()> {
         let ret = unsafe { rtnl_addr_add(sock.sock, self.addr, flags) };
 
         if ret < 0 {
@@ -217,9 +217,9 @@ impl Link {
     }
 
     /// Set the namespace file descriptor for an interface
-    pub fn set_ns_fd(&self, ns_fd: c_int) {
+    pub fn set_ns_pid(&self, pid: libc::pid_t) {
         unsafe {
-            rtnl_link_set_ns_fd(self.link, ns_fd);
+            rtnl_link_set_ns_pid(self.link, pid);
         }
     }
 
@@ -498,6 +498,10 @@ impl Addr {
     pub fn cidrlen(&self) -> c_uint {
         unsafe { nl_addr_get_prefixlen(self.addr) }
     }
+
+    pub fn set_cidrlen(&self, cidr: c_int) {
+        unsafe { nl_addr_set_prefixlen(self.addr, cidr) };
+    }
 }
 
 impl Debug for Addr {
@@ -580,6 +584,17 @@ pub struct Route {
 }
 
 impl Route {
+    /// Allocates a new route to modify
+    pub fn new() -> Option<Self> {
+        let route = unsafe { rtnl_route_alloc() };
+
+        if route.is_null() {
+            None
+        } else {
+            Some(Route { route })
+        }
+    }
+
     /// Represents the destination of the route
     pub fn src(&self) -> Option<Addr> {
         unsafe {
@@ -603,6 +618,28 @@ impl Route {
             }
 
             Some(Addr { addr })
+        }
+    }
+
+    pub fn set_dst(&self, addr: Addr) {
+        unsafe {
+            rtnl_route_set_dst(self.route, addr.addr);
+        }
+    }
+
+    /// Adds a new next hop or link
+    pub fn add_nexthop(&self, nh: &Nexthop) {
+        unsafe { rtnl_route_add_nexthop(self.route, nh.nexthop) };
+    }
+
+    /// Talks to the kernel and adds the route to the routing table
+    pub fn add(&self, socket: &netlink::Socket, flags: c_int) -> error::Result<()> {
+        let ret = unsafe { rtnl_route_add(socket.sock, self.route, flags) };
+
+        if ret < 0 {
+            Err(error::Error::new(ret))
+        } else {
+            Ok(())
         }
     }
 
@@ -645,6 +682,17 @@ pub struct Nexthop {
 }
 
 impl Nexthop {
+    /// Allocates a new next hop, unless out of memory
+    pub fn new() -> Option<Self> {
+        let nexthop = unsafe { rtnl_route_nh_alloc() };
+
+        if nexthop.is_null() {
+            return None;
+        }
+
+        Some(Self { nexthop })
+    }
+
     /// Returns the gateway used for this network hop
     pub fn gateway(&self) -> Option<Addr> {
         unsafe {
@@ -658,9 +706,21 @@ impl Nexthop {
         }
     }
 
+    /// Sets the gateway to use
+    pub fn set_gateway(&self, addr: Addr) {
+        unsafe {
+            rtnl_route_nh_set_gateway(self.nexthop, addr.addr);
+        }
+    }
+
     /// Returns the interface index for this network hop
     pub fn ifindex(&self) -> i32 {
         unsafe { rtnl_route_nh_get_ifindex(self.nexthop) }
+    }
+
+    /// Sets the interface index that represents the device this route is on
+    pub fn set_ifindex(&self, index: c_int) {
+        unsafe { rtnl_route_nh_set_ifindex(self.nexthop, index) };
     }
 }
 

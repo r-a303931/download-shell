@@ -19,6 +19,7 @@ use std::net::Ipv4Addr;
 mod iptc;
 mod nl;
 
+#[derive(Debug)]
 struct Args {
     program: String,
     program_args: Vec<String>,
@@ -30,6 +31,7 @@ fn parse_args() -> Args {
     let mut source_ip = None::<Ipv4Addr>;
 
     let mut args = std::env::args();
+    args.next();
     while let Some(arg) = args.next().take() {
         match &*arg {
             "-s" | "--source-ip" => match args.next().take().map(|s| s.parse()) {
@@ -42,14 +44,12 @@ fn parse_args() -> Args {
                 }
             },
             _ => {
+                program = arg;
                 break;
             }
         }
     }
 
-    if let Some(prog) = args.next() {
-        program = prog;
-    }
     let mut program_args = args.collect::<Vec<_>>();
     program_args.insert(0, program.clone());
 
@@ -218,7 +218,7 @@ fn main() -> anyhow::Result<()> {
         rt_local_ip.set_broadcast(broadcast_ip)?;
         rt_local_ip.set_prefixlen(30);
 
-        rt_local_ip.add(nl_sock, 0x200)?;
+        rt_local_ip.add(&nl_sock, 0x200)?;
     }
 
     // Lines 18 and 22-25 need to be done after forking and unshare
@@ -247,7 +247,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     // 29: echo 1 > /proc/sys/net/ipv4/ip_forward
-    std::fs::write("/proc/sys/net/ipv4/ip_forward", "1")?;
+    std::fs::write("/proc/sys/net/ipv4/ip_forward", b"1")?;
 
     // 31: If a source IP is specified
     match &args.source_ip {
@@ -259,15 +259,32 @@ fn main() -> anyhow::Result<()> {
             {}
 
             // 36: echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
-            std::fs::write("/proc/sys/net/ipv4/conf/all/proxy_arp", "1")?;
+            std::fs::write("/proc/sys/net/ipv4/conf/all/proxy_arp", b"1")?;
             // 37: echo 1 > /proc/sys/net/ipv4/conf/$DEFAULT_IF/proxy_arp
             std::fs::write(
                 &format!("/proc/sys/net/ipv4/conf/{}/proxy_arp", &default_if.name()),
-                "1",
+                b"1",
             )?;
 
             // 38: ip route add $1/32 dev downloader.0
-            {}
+            {
+                let hop = nl::route::Nexthop::new()
+                    .ok_or(anyhow::anyhow!("Could not allocate a new nexthop object"))?;
+
+                hop.set_ifindex(host_link.ifindex());
+
+                let new_route = nl::route::Route::new().ok_or(anyhow::anyhow!(
+                    "Could not allocate a new route object for ARP proxy"
+                ))?;
+
+                let target_addr = nl::route::Addr::from(*ip);
+                target_addr.set_cidrlen(32);
+
+                new_route.add_nexthop(&hop);
+                new_route.set_dst(target_addr);
+
+                new_route.add(&nl_sock, 0x400)?;
+            }
         }
     }
 
@@ -307,14 +324,15 @@ fn main() -> anyhow::Result<()> {
         }
         // Child
         0 => {
+            drop(nl_sock);
+
             // 16: ip netns add downloader
-            println!("child: Unsharing!");
             {
                 let unshare_result =
                     unsafe { libc::unshare(libc::CLONE_NEWNS | libc::CLONE_NEWNET) };
 
                 if unshare_result < 0 {
-                    eprintln!("Could not unshare! {:?}", std::io::Error::last_os_error());
+                    eprintln!("Failed to unshare! {:?}", std::io::Error::last_os_error());
                     std::process::exit(2);
                 }
 
@@ -323,12 +341,46 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            println!("child: Waiting for link");
             // 18: ip link set downloader.1 netns downloader
             unsafe {
                 libc::sem_wait(movelink_semaphore);
             }
-            println!("child: Got link! Executing");
+
+            let nl_sock = nl::netlink::Socket::new()?;
+            let links = nl_sock.get_links()?;
+
+            let set_interface_up = nl::route::Link::new();
+            set_interface_up.set_flags(nl::route::Link::IFF_UP);
+
+            // 22: ip -n downloader link set lo up
+            {
+                let lo = links
+                    .iter()
+                    .find(|l| l.name() == "lo")
+                    .ok_or(anyhow::anyhow!("Could not find lo loopback interface!"))?;
+                lo.change(&nl_sock, &set_interface_up)?;
+            }
+
+            // 23: ip -n downloader link set downloader.1 up
+            container_link.change(&nl_sock, &set_interface_up)?;
+
+            // 24: ip -n downloader addr add 172.31.254.254/30 dev downloader.1
+            {
+                let local_ip = nl::route::Addr::from(container_tunnel_ip);
+                let broadcast_ip = nl::route::Addr::from(tunnel_broadcast_ip);
+                let rt_local_ip = nl::route::RtAddr::new()
+                    .ok_or(anyhow::anyhow!("Could not allocate new tunnel IP address"))?;
+
+                rt_local_ip.set_local(local_ip)?;
+                rt_local_ip.set_ifindex(container_link.ifindex());
+                rt_local_ip.set_broadcast(broadcast_ip)?;
+                rt_local_ip.set_prefixlen(30);
+
+                rt_local_ip.add(&nl_sock, 0x200)?;
+            }
+
+            // 25: ip -n downloader route add default via 172.31.254.253
+            {}
 
             // 41: ip netns exec downloader bash
             {
@@ -364,20 +416,20 @@ fn main() -> anyhow::Result<()> {
         // Parent
         1.. => {
             // 16: ip netns add downloader
-            println!("parent: Waiting for child unshare...");
             unsafe {
                 libc::sem_wait(unshare_semaphore);
             };
-            println!("parent: Got child unshare!");
 
             // 18: ip link set downloader.1 netns downloader
             {
+                let changes = nl::route::Link::new();
+                changes.set_ns_pid(child);
+                container_link.change(&nl_sock, &changes)?;
+
                 unsafe {
                     libc::sem_post(movelink_semaphore);
                 }
             }
-
-            println!("parent: Signalled ready to exec");
 
             // 41: ip netns exec downloader bash
             {
@@ -402,6 +454,9 @@ fn main() -> anyhow::Result<()> {
             // 48: iptables -t nat -D POSTROUTING $(iptables --line-numbers -vn -t nat -L POSTROUTING | awk '/'$1'/ { print $1 }')
         }
     }
+
+    // iptables -D FORWARD $(iptables --line-numbers -vn -L FORWARD | awk '/172.31.254.254/ print $1 }')
+    {}
 
     Ok(())
 }

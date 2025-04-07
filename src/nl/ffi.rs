@@ -55,6 +55,7 @@ unsafe extern "C" {
     pub fn nl_addr_put(addr: *mut nl_addr) -> c_void;
     pub fn nl_addr_get_family(addr: *mut nl_addr) -> c_int;
     pub fn nl_addr_get_prefixlen(addr: *mut nl_addr) -> c_uint;
+    pub fn nl_addr_set_prefixlen(addr: *mut nl_addr, cidr: c_int);
 
     pub fn nl_cache_foreach(
         cache: *mut nl_cache,
@@ -71,7 +72,7 @@ unsafe extern "C" {
     pub fn rtnl_addr_alloc() -> *mut rtnl_addr;
     pub fn rtnl_addr_get_ifindex(addr: *mut rtnl_addr) -> c_int;
     pub fn rtnl_addr_set_ifindex(addr: *mut rtnl_addr, index: c_int) -> c_int;
-    pub fn rtnl_addr_set_prefixlen(addr: *mut rtnl_addr, index: c_int);
+    pub fn rtnl_addr_set_prefixlen(addr: *mut rtnl_addr, cidr: c_int);
     pub fn rtnl_addr_get_family(addr: *mut rtnl_addr) -> c_int;
     pub fn rtnl_addr_get_local(addr: *mut rtnl_addr) -> *mut nl_addr;
     pub fn rtnl_addr_set_local(addr: *mut rtnl_addr, local: *mut nl_addr) -> c_int;
@@ -104,7 +105,7 @@ unsafe extern "C" {
     pub fn rtnl_link_set_flags(link: *mut rtnl_link, flags: c_uint);
     pub fn rtnl_link_unset_flags(link: *mut rtnl_link, flags: c_uint);
     pub fn rtnl_link_get_mtu(link: *mut rtnl_link) -> c_uint;
-    pub fn rtnl_link_set_ns_fd(link: *mut rtnl_link, fd: c_int);
+    pub fn rtnl_link_set_ns_pid(link: *mut rtnl_link, pid: libc::pid_t);
     pub fn rtnl_link_set_name(link: *mut rtnl_link, name: *const c_char);
     pub fn rtnl_link_change(
         sock: *mut nl_sock,
@@ -116,6 +117,7 @@ unsafe extern "C" {
     pub fn rtnl_link_delete(sock: *mut nl_sock, link: *const rtnl_link) -> c_int;
     pub fn rtnl_link_veth_get_peer(link: *mut rtnl_link) -> *mut rtnl_link;
 
+    pub fn rtnl_route_alloc() -> *mut rtnl_route;
     pub fn rtnl_route_alloc_cache(
         sock: *mut nl_sock,
         family: c_int,
@@ -124,11 +126,17 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn rtnl_route_get_src(route: *mut rtnl_route) -> *mut nl_addr;
     pub fn rtnl_route_get_dst(route: *mut rtnl_route) -> *mut nl_addr;
+    pub fn rtnl_route_set_dst(route: *mut rtnl_route, addr: *mut nl_addr);
     pub fn rtnl_route_get_iif(route: *mut rtnl_route) -> c_int;
     pub fn rtnl_route_get_pref_src(route: *mut rtnl_route) -> *mut nl_addr;
+    pub fn rtnl_route_add_nexthop(route: *mut rtnl_route, hop: *mut rtnl_nexthop);
     pub fn rtnl_route_get_nnexthops(route: *mut rtnl_route) -> c_int;
     pub fn rtnl_route_nexthop_n(route: *mut rtnl_route, ind: c_int) -> *mut rtnl_nexthop;
+    pub fn rtnl_route_add(sock: *mut nl_sock, route: *mut rtnl_route, flags: c_int) -> c_int;
 
+    pub fn rtnl_route_nh_alloc() -> *mut rtnl_nexthop;
     pub fn rtnl_route_nh_get_gateway(hop: *mut rtnl_nexthop) -> *mut nl_addr;
+    pub fn rtnl_route_nh_set_gateway(hop: *mut rtnl_nexthop, addr: *mut nl_addr);
     pub fn rtnl_route_nh_get_ifindex(hop: *mut rtnl_nexthop) -> c_int;
+    pub fn rtnl_route_nh_set_ifindex(hop: *mut rtnl_nexthop, index: c_int);
 }
