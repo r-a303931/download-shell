@@ -14,11 +14,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program; if not, see <https://www.gnu.org/licenses/>.
 
-#![no_main]
-
 use std::net::Ipv4Addr;
 
-mod iptc;
 mod nl;
 
 #[derive(Debug)]
@@ -121,23 +118,7 @@ fn find_tunnel_ip_range(routes: &nl::netlink::Cache<nl::route::Route>) -> anyhow
     Ok(result_ip)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn main(
-    argc: i32,
-    argv: *mut *mut libc::c_char,
-    envp: *mut *mut libc::c_char,
-) -> i32 {
-    if let Err(e) = main_internal(argc, argv, envp) {
-        eprintln!("Issue running the main function: {e}");
-    }
-    0
-}
-
-fn main_internal(
-    argc: i32,
-    argv: *mut *mut libc::c_char,
-    envp: *mut *mut libc::c_char,
-) -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     // This Rust program is based on a bash script, found in the root
     // of this git repo called download-shell.sh
 
@@ -267,18 +248,50 @@ fn main_internal(
     // 29: echo 1 > /proc/sys/net/ipv4/ip_forward
     std::fs::write("/proc/sys/net/ipv4/ip_forward", b"1")?;
 
-    println!("Here 1");
-    iptc::init_iptables();
-    println!("Here 2");
+    // Having a consistent comment makes the cleanup that comes later a lot easier
+    let firewall_comment = format!("dlsh{}", unsafe { libc::getpid() });
 
     // 31: If a source IP is specified
     match &args.source_ip {
         None => {
             // 32: iptables -t nat -A POSTROUTING -o "$DEFAULT_IF" -j MASQUERADE
+            std::process::Command::new("iptables")
+                .args([
+                    "-t",
+                    "nat",
+                    "-A",
+                    "POSTROUTING",
+                    "-o",
+                    &default_if.name(),
+                    "-j",
+                    "MASQUERADE",
+                    "-m",
+                    "comment",
+                    "--comment",
+                    &firewall_comment,
+                ])
+                .output()?;
         }
         Some(ip) => {
             // 34: iptables -t nat -A POSTROUTING -s 172.31.254.254 -j SNAT --to-source $1
-            {}
+            std::process::Command::new("iptables")
+                .args([
+                    "-t",
+                    "nat",
+                    "-A",
+                    "POSTROUTING",
+                    "-s",
+                    &format!("{container_tunnel_ip}"),
+                    "-j",
+                    "SNAT",
+                    "--to-source",
+                    &format!("{ip}"),
+                    "-m",
+                    "comment",
+                    "--comment",
+                    &firewall_comment,
+                ])
+                .output()?;
 
             // 36: echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
             std::fs::write("/proc/sys/net/ipv4/conf/all/proxy_arp", b"1")?;
@@ -311,7 +324,22 @@ fn main_internal(
     }
 
     // iptables -t filter -A FORWARD -s 172.31.254.254 -j ACCEPT
-    {}
+    std::process::Command::new("iptables")
+        .args([
+            "-t",
+            "filter",
+            "-A",
+            "FORWARD",
+            "-s",
+            &format!("{container_tunnel_ip}"),
+            "-j",
+            "ACCEPT",
+            "-m",
+            "comment",
+            "--comment",
+            &firewall_comment,
+        ])
+        .output()?;
 
     let (unshare_semaphore, movelink_semaphore) = unsafe {
         let unshare_semaphore = libc::mmap(
@@ -343,6 +371,7 @@ fn main_internal(
         // Error
         ..0 => {
             // Error out
+            println!("Error forking!");
         }
         // Child
         0 => {
@@ -435,13 +464,29 @@ fn main_internal(
                     .chain(Some(std::ptr::null()))
                     .collect();
 
+                let env: Vec<String> = std::env::vars()
+                    .map(|(k, v)| {
+                        if k == "PS1" {
+                            format!("PS1=(download-shell) {v}")
+                        } else {
+                            format!("{k}={v}")
+                        }
+                    })
+                    .collect();
+
+                let envp: Vec<*const std::ffi::c_char> = env
+                    .iter()
+                    .map(|m| m.as_ptr() as *const _)
+                    .chain(Some(std::ptr::null()))
+                    .collect();
+
+                let program = args.program.clone();
+
                 unsafe {
-                    libc::execve(
-                        args.program.as_ptr() as *const i8,
-                        argv.as_ptr(),
-                        &(*envp as *const _) as *const _,
-                    );
-                }
+                    libc::execve(program.as_ptr() as *const i8, argv.as_ptr(), envp.as_ptr())
+                };
+
+                Err(std::io::Error::last_os_error())?;
             }
         }
         // Parent
@@ -476,18 +521,38 @@ fn main_internal(
         }
     }
 
-    // 45: If a source IP is specified
-    match &args.source_ip {
-        None => {
-            // 46: iptables -t nat -D POSTROUTING $(iptables --line-numbers -vn -t nat -L POSTROUTING | awk '/MASQUERADE/ { print $1 }')
-        }
-        Some(ip) => {
-            // 48: iptables -t nat -D POSTROUTING $(iptables --line-numbers -vn -t nat -L POSTROUTING | awk '/'$1'/ { print $1 }')
-        }
-    }
+    // Find the firewall rules with the comment specified above and delete them
+    let clean_iptables = |table: &str, chain: &str| -> anyhow::Result<()> {
+        let current_rules = std::process::Command::new("iptables")
+            .args(["-t", table, "--line-numbers", "-vn", "-L", chain])
+            .output()?
+            .stdout;
 
-    // iptables -D FORWARD $(iptables --line-numbers -vn -L FORWARD | awk '/172.31.254.254/ print $1 }')
-    {}
+        let output_utf8 = std::str::from_utf8(&current_rules)?;
+
+        let Some(rule_line) = output_utf8
+            .lines()
+            .find(|l| l.contains(&format!("/* {firewall_comment} */")))
+        else {
+            eprintln!("warning: could not clear out firewall rules from the {table} table: could not find rule");
+            return Ok(());
+        };
+
+        let rule_num: u16 = rule_line
+            .split_ascii_whitespace()
+            .next()
+            .ok_or(anyhow::anyhow!("warning: could not clear out firewall rules from the {table} table: could not parse rule number"))?
+            .parse()?;
+
+        std::process::Command::new("iptables")
+            .args(["-t", table, "-D", chain, &format!("{rule_num}")])
+            .output()?;
+
+        Ok(())
+    };
+
+    clean_iptables("filter", "FORWARD")?;
+    clean_iptables("nat", "POSTROUTING")?;
 
     Ok(())
 }
