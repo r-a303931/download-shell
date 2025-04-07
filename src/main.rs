@@ -155,7 +155,7 @@ fn main() -> anyhow::Result<()> {
     let nl_sock = nl::netlink::Socket::new()?;
     let routes = nl_sock.get_routes()?;
 
-    let tunnel_net_id = find_tunnel_ip_range(routes)?;
+    let tunnel_net_id: u32 = find_tunnel_ip_range(routes)?.into();
 
     let host_link_name = format!("dlsh{}.0", unsafe { libc::getpid() });
     let container_link_name = format!("dlsh{}.1", unsafe { libc::getpid() });
@@ -204,7 +204,21 @@ fn main() -> anyhow::Result<()> {
     }
 
     // 20: ip addr add 172.31.254.253/30 dev downloader.0
-    {}
+    let tunnel_broadcast_ip: Ipv4Addr = (tunnel_net_id + 3).into();
+    let host_tunnel_ip: Ipv4Addr = (tunnel_net_id + 1).into();
+    {
+        let local_ip = nl::route::Addr::from(host_tunnel_ip);
+        let broadcast_ip = nl::route::Addr::from(tunnel_broadcast_ip);
+        let rt_local_ip = nl::route::RtAddr::new()
+            .ok_or(anyhow::anyhow!("Could not allocate new tunnel IP address"))?;
+
+        rt_local_ip.set_local(local_ip)?;
+        rt_local_ip.set_ifindex(host_link.ifindex());
+        rt_local_ip.set_broadcast(broadcast_ip)?;
+        rt_local_ip.set_prefixlen(30);
+
+        rt_local_ip.add(nl_sock, 0x200)?;
+    }
 
     Ok(())
 }

@@ -68,9 +68,15 @@ unsafe extern "C" {
     pub fn nl_cache_destroy_and_free(obj: *mut nl_cache) -> c_void;
 
     pub fn rtnl_addr_alloc_cache(sock: *mut nl_sock, result: *mut *mut nl_cache) -> c_int;
+    pub fn rtnl_addr_alloc() -> *mut rtnl_addr;
     pub fn rtnl_addr_get_ifindex(addr: *mut rtnl_addr) -> c_int;
+    pub fn rtnl_addr_set_ifindex(addr: *mut rtnl_addr, index: c_int) -> c_int;
+    pub fn rtnl_addr_set_prefixlen(addr: *mut rtnl_addr, index: c_int);
     pub fn rtnl_addr_get_family(addr: *mut rtnl_addr) -> c_int;
     pub fn rtnl_addr_get_local(addr: *mut rtnl_addr) -> *mut nl_addr;
+    pub fn rtnl_addr_set_local(addr: *mut rtnl_addr, local: *mut nl_addr) -> c_int;
+    pub fn rtnl_addr_set_broadcast(addr: *mut rtnl_addr, broadcast: *mut nl_addr) -> c_int;
+    pub fn rtnl_addr_add(sock: *mut nl_sock, addr: *mut rtnl_addr, flags: c_int) -> c_int;
 
     pub fn rtnl_neigh_alloc_cache(sock: *mut nl_sock, result: *mut *mut nl_cache) -> c_int;
     pub fn rtnl_neigh_get(

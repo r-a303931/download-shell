@@ -34,6 +34,16 @@ pub struct RtAddr {
 }
 
 impl RtAddr {
+    pub fn new() -> Option<Self> {
+        let addr = unsafe { rtnl_addr_alloc() };
+
+        if addr.is_null() {
+            return None;
+        }
+
+        Some(Self { addr })
+    }
+
     pub fn local(&self) -> Option<Addr> {
         unsafe {
             let addr = rtnl_addr_get_local(self.addr);
@@ -46,12 +56,50 @@ impl RtAddr {
         }
     }
 
+    pub fn set_local(&self, addr: Addr) -> error::Result<()> {
+        let res = unsafe { rtnl_addr_set_local(self.addr, addr.addr) };
+
+        if res < 0 {
+            return Err(error::Error::new(res));
+        }
+
+        Ok(())
+    }
+
+    pub fn set_broadcast(&self, addr: Addr) -> error::Result<()> {
+        let res = unsafe { rtnl_addr_set_broadcast(self.addr, addr.addr) };
+
+        if res < 0 {
+            return Err(error::Error::new(res));
+        }
+
+        Ok(())
+    }
+
     pub fn ifindex(&self) -> i32 {
         unsafe { rtnl_addr_get_ifindex(self.addr) }
     }
 
+    pub fn set_ifindex(&self, ifindex: c_int) {
+        unsafe { rtnl_addr_set_ifindex(self.addr, ifindex) };
+    }
+
+    pub fn set_prefixlen(&self, prefixlen: c_int) {
+        unsafe { rtnl_addr_set_prefixlen(self.addr, prefixlen) };
+    }
+
     pub fn family(&self) -> i32 {
         unsafe { rtnl_addr_get_family(self.addr) }
+    }
+
+    pub fn add(&self, sock: netlink::Socket, flags: c_int) -> error::Result<()> {
+        let ret = unsafe { rtnl_addr_add(sock.sock, self.addr, flags) };
+
+        if ret < 0 {
+            return Err(error::Error::new(ret));
+        }
+
+        Ok(())
     }
 }
 
