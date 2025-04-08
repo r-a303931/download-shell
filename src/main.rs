@@ -16,6 +16,8 @@
 
 use std::net::Ipv4Addr;
 
+use anyhow::Context;
+
 mod nl;
 
 #[derive(Debug)]
@@ -151,8 +153,10 @@ fn main() -> anyhow::Result<()> {
         None => println!("Sending traffic using the host IP address"),
     }
 
-    let nl_sock = nl::netlink::Socket::new()?;
-    let routes = nl_sock.get_routes()?;
+    let nl_sock = nl::netlink::Socket::new().context("Could not allocate Netlink socket")?;
+    let routes = nl_sock
+        .get_routes()
+        .context("Could not initially load routes")?;
 
     let tunnel_net_id: u32 = find_tunnel_ip_range(&routes)?.into();
 
@@ -171,7 +175,9 @@ fn main() -> anyhow::Result<()> {
 
         link.add(&nl_sock, 0x200 | 0x400 /* NLM_F_CREATE | NLM_F_EXCL */)?;
 
-        let links = nl_sock.get_links()?;
+        let links = nl_sock
+            .get_links()
+            .context("Could not acquire link list for adding veth device")?;
 
         let link = links
             .iter()
@@ -199,7 +205,9 @@ fn main() -> anyhow::Result<()> {
     {
         let up = nl::route::Link::new();
         up.set_flags(nl::route::Link::IFF_UP);
-        host_link.change(&nl_sock, &up)?;
+        host_link
+            .change(&nl_sock, &up)
+            .context("Could not set downloader interface to be up")?;
     }
 
     let host_tunnel_ip: Ipv4Addr = (tunnel_net_id + 1).into();
@@ -212,12 +220,18 @@ fn main() -> anyhow::Result<()> {
         let rt_local_ip = nl::route::RtAddr::new()
             .ok_or(anyhow::anyhow!("Could not allocate new tunnel IP address"))?;
 
-        rt_local_ip.set_local(local_ip)?;
+        rt_local_ip
+            .set_local(local_ip)
+            .context("Could not set the address of the host interface")?;
         rt_local_ip.set_ifindex(host_link.ifindex());
-        rt_local_ip.set_broadcast(broadcast_ip)?;
+        rt_local_ip
+            .set_broadcast(broadcast_ip)
+            .context("Could not set the broadcast IP of the host interface")?;
         rt_local_ip.set_prefixlen(30);
 
-        rt_local_ip.add(&nl_sock, 0x200)?;
+        rt_local_ip
+            .add(&nl_sock, 0x200)
+            .context("Could not add the IP address to the host tunnel interface")?;
     }
 
     // Lines 18 and 22-25 need to be done after forking and unshare
@@ -246,7 +260,8 @@ fn main() -> anyhow::Result<()> {
     };
 
     // 29: echo 1 > /proc/sys/net/ipv4/ip_forward
-    std::fs::write("/proc/sys/net/ipv4/ip_forward", b"1")?;
+    std::fs::write("/proc/sys/net/ipv4/ip_forward", b"1")
+        .context("could not enable IP forwarding")?;
 
     // Having a consistent comment makes the cleanup that comes later a lot easier
     let firewall_comment = format!("dlsh{}", unsafe { libc::getpid() });
@@ -270,7 +285,8 @@ fn main() -> anyhow::Result<()> {
                     "--comment",
                     &firewall_comment,
                 ])
-                .output()?;
+                .output()
+                .context("Could not create the MASQUERADE rule")?;
         }
         Some(ip) => {
             // 34: iptables -t nat -A POSTROUTING -s 172.31.254.254 -j SNAT --to-source $1
@@ -291,15 +307,18 @@ fn main() -> anyhow::Result<()> {
                     "--comment",
                     &firewall_comment,
                 ])
-                .output()?;
+                .output()
+                .context("Could not create source NAT rule")?;
 
             // 36: echo 1 > /proc/sys/net/ipv4/conf/all/proxy_arp
-            std::fs::write("/proc/sys/net/ipv4/conf/all/proxy_arp", b"1")?;
+            std::fs::write("/proc/sys/net/ipv4/conf/all/proxy_arp", b"1")
+                .context("could not enable proxy_arp")?;
             // 37: echo 1 > /proc/sys/net/ipv4/conf/$DEFAULT_IF/proxy_arp
             std::fs::write(
                 &format!("/proc/sys/net/ipv4/conf/{}/proxy_arp", &default_if.name()),
                 b"1",
-            )?;
+            )
+            .context("could not enable proxy arp for interface")?;
 
             // 38: ip route add $1/32 dev downloader.0
             {
@@ -339,7 +358,8 @@ fn main() -> anyhow::Result<()> {
             "--comment",
             &firewall_comment,
         ])
-        .output()?;
+        .output()
+        .context("could not add firewall rule to allow traffic forwarding")?;
 
     let (unshare_semaphore, movelink_semaphore) = unsafe {
         let unshare_semaphore = libc::mmap(
@@ -350,7 +370,11 @@ fn main() -> anyhow::Result<()> {
             0,
             0,
         ) as *mut libc::sem_t;
-        libc::sem_init(unshare_semaphore, 1, 0);
+        let ret = libc::sem_init(unshare_semaphore, 1, 0);
+        if ret != 0 {
+            Err(std::io::Error::from_raw_os_error(ret))
+                .context("could not initialize the semaphore for unshare")?;
+        }
 
         let movelink_semaphore = libc::mmap(
             std::ptr::null_mut(),
@@ -360,7 +384,11 @@ fn main() -> anyhow::Result<()> {
             0,
             0,
         ) as *mut libc::sem_t;
-        libc::sem_init(movelink_semaphore, 1, 1);
+        let ret = libc::sem_init(movelink_semaphore, 1, 1);
+        if ret != 0 {
+            Err(std::io::Error::from_raw_os_error(ret))
+                .context("could not initialize the semaphore for moving links")?;
+        }
 
         (unshare_semaphore, movelink_semaphore)
     };
@@ -372,6 +400,7 @@ fn main() -> anyhow::Result<()> {
         ..0 => {
             // Error out
             println!("Error forking!");
+            std::process::exit(3);
         }
         // Child
         0 => {
@@ -388,17 +417,28 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 unsafe {
-                    libc::sem_post(unshare_semaphore);
+                    let ret = libc::sem_post(unshare_semaphore);
+                    if ret != 0 {
+                        Err(std::io::Error::from_raw_os_error(ret))
+                            .context("child: could not signal unshare complete")?;
+                    }
                 }
             }
 
             // 18: ip link set downloader.1 netns downloader
             unsafe {
-                libc::sem_wait(movelink_semaphore);
+                let ret = libc::sem_wait(movelink_semaphore);
+                if ret != 0 {
+                    Err(std::io::Error::from_raw_os_error(ret))
+                        .context("child: could not wait for link to be moved to namespace")?;
+                }
             }
 
-            let nl_sock = nl::netlink::Socket::new()?;
-            let links = nl_sock.get_links()?;
+            let nl_sock =
+                nl::netlink::Socket::new().context("child: could not get new netlink socket")?;
+            let links = nl_sock
+                .get_links()
+                .context("child: could not get new links object")?;
 
             let set_interface_up = nl::route::Link::new();
             set_interface_up.set_flags(nl::route::Link::IFF_UP);
@@ -409,11 +449,14 @@ fn main() -> anyhow::Result<()> {
                     .iter()
                     .find(|l| l.name() == "lo")
                     .ok_or(anyhow::anyhow!("Could not find lo loopback interface!"))?;
-                lo.change(&nl_sock, &set_interface_up)?;
+                lo.change(&nl_sock, &set_interface_up)
+                    .context("child: could not set loopback up")?;
             }
 
             // 23: ip -n downloader link set downloader.1 up
-            container_link.change(&nl_sock, &set_interface_up)?;
+            container_link
+                .change(&nl_sock, &set_interface_up)
+                .context("child: could not set container interface up")?;
 
             // 24: ip -n downloader addr add 172.31.254.254/30 dev downloader.1
             {
@@ -422,12 +465,18 @@ fn main() -> anyhow::Result<()> {
                 let rt_local_ip = nl::route::RtAddr::new()
                     .ok_or(anyhow::anyhow!("Could not allocate new tunnel IP address"))?;
 
-                rt_local_ip.set_local(local_ip)?;
+                rt_local_ip
+                    .set_local(local_ip)
+                    .context("child: could not set host IP for tunnel route")?;
                 rt_local_ip.set_ifindex(container_link.ifindex());
-                rt_local_ip.set_broadcast(broadcast_ip)?;
+                rt_local_ip
+                    .set_broadcast(broadcast_ip)
+                    .context("child: could not set broadcast for tunnel route")?;
                 rt_local_ip.set_prefixlen(30);
 
-                rt_local_ip.add(&nl_sock, 0x200)?;
+                rt_local_ip
+                    .add(&nl_sock, 0x200)
+                    .context("child: could not create tunnel route")?;
             }
 
             // 25: ip -n downloader route add default via 172.31.254.253
@@ -450,7 +499,9 @@ fn main() -> anyhow::Result<()> {
                 new_route.add_nexthop(&hop);
                 new_route.set_dst(default_route);
 
-                new_route.add(&nl_sock, 0x400)?;
+                new_route
+                    .add(&nl_sock, 0x400)
+                    .context("child: could not create default route")?;
             }
 
             // 41: ip netns exec downloader bash
@@ -493,17 +544,27 @@ fn main() -> anyhow::Result<()> {
         1.. => {
             // 16: ip netns add downloader
             unsafe {
-                libc::sem_wait(unshare_semaphore);
+                let ret = libc::sem_wait(unshare_semaphore);
+                if ret != 0 {
+                    Err(std::io::Error::from_raw_os_error(ret))
+                        .context("parent: could not wait for unshare")?;
+                }
             };
 
             // 18: ip link set downloader.1 netns downloader
             {
                 let changes = nl::route::Link::new();
                 changes.set_ns_pid(child);
-                container_link.change(&nl_sock, &changes)?;
+                container_link
+                    .change(&nl_sock, &changes)
+                    .context("parent: could not move device to namespace")?;
 
                 unsafe {
-                    libc::sem_post(movelink_semaphore);
+                    let ret = libc::sem_post(movelink_semaphore);
+                    if ret != 0 {
+                        Err(std::io::Error::from_raw_os_error(ret))
+                            .context("parent: could not signal device move")?;
+                    }
                 }
             }
 
@@ -525,7 +586,8 @@ fn main() -> anyhow::Result<()> {
     let clean_iptables = |table: &str, chain: &str| -> anyhow::Result<()> {
         let current_rules = std::process::Command::new("iptables")
             .args(["-t", table, "--line-numbers", "-vn", "-L", chain])
-            .output()?
+            .output()
+            .context("could not list firewall rules")?
             .stdout;
 
         let output_utf8 = std::str::from_utf8(&current_rules)?;
@@ -546,13 +608,14 @@ fn main() -> anyhow::Result<()> {
 
         std::process::Command::new("iptables")
             .args(["-t", table, "-D", chain, &format!("{rule_num}")])
-            .output()?;
+            .output()
+            .context("could not delete firewall rule")?;
 
         Ok(())
     };
 
-    clean_iptables("filter", "FORWARD")?;
-    clean_iptables("nat", "POSTROUTING")?;
+    clean_iptables("filter", "FORWARD").context("could not clear filter rule")?;
+    clean_iptables("nat", "POSTROUTING").context("could not clear NAT rule")?;
 
     Ok(())
 }
